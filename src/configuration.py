@@ -7,8 +7,10 @@ use the schema library (https://github.com/keleshev/schema) for this.
 
 See configuration_test.py for example configurations.
 """
+import re
 import os
 import yaml
+from interpolate import interpolate
 from schema import Schema, And, Or, Optional, Const
 
 CONFIGURATION_PATH = "configuration/config.yaml"
@@ -89,13 +91,14 @@ ROOT_SCHEMA = Schema(
         "host": str,
         "matchRequest": HTTP_REQUEST_SCHEMA,
         "onMatchedRequest": Schema([TRANSACTION_SCHEMA]),
-        Optional("onAllSucceeded"): HTTP_REQUEST_SCHEMA,
+        Optional("onAllSucceeded"): HTTP_RESPONSE_SCHEMA,
+        Optional("onAnyFailed"): HTTP_RESPONSE_SCHEMA,
     },
     ignore_extra_keys=True,
 )
 
 
-class Configuration(object):
+class ConfigurationStore(object):
     """
     This manager pulls configuration artifacts from a mounted directory called `configuration`.
     The directory mounting in production is handled by Kubernetes ConfigMaps. 
@@ -103,8 +106,11 @@ class Configuration(object):
 
     def __init__(self):
 
-        with open(CONFIGURATION_PATH) as config:
-            self.config = ROOT_SCHEMA.validate(yaml.load(config))
+        self.config = {}
+
+        if os.path.exists(CONFIGURATION_PATH):
+            with open(CONFIGURATION_PATH) as config:
+                self.config = ROOT_SCHEMA.validate(yaml.load(config))
 
     def get_config(self):
 

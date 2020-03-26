@@ -7,7 +7,7 @@ from configuration import (
     TRANSACTION_SCHEMA,
     HTTP_REQUEST_SCHEMA,
     HTTP_RESPONSE_SCHEMA,
-    Configuration,
+    ConfigurationStore,
     CONFIGURATION_PATH,
 )
 
@@ -114,7 +114,7 @@ class TestConfiguration(unittest.TestCase):
                     "maxRetriesOnTimeout": 3,
                 }
             ],
-            "onAllSucceeded": {"method": "GET", "url": "qbox"},
+            "onAllSucceeded": {"status-code": 200},
         }
 
         ROOT_SCHEMA.validate(validRoot)
@@ -155,7 +155,8 @@ class TestConfigurationManager(unittest.TestCase):
                 "maxRetriesOnTimeout": 3,
             }
         ],
-        "onAllSucceeded": {"method": "GET", "url": "me.svc"},
+        "onAllSucceeded": {"status-code": 200},
+        "onAnyFailed": {"status-code": 200},
     }
 
     def test_get_config(self):
@@ -163,7 +164,10 @@ class TestConfigurationManager(unittest.TestCase):
         with patch(
             "builtins.open", mock_open(read_data=yaml.dump(self.validRoot))
         ) as mock_file:
-            configuration = Configuration().get_config()
+
+            with patch("os.path.exists") as os_mock:
+                os_mock.return_value = True
+                configuration = ConfigurationStore().get_config()
 
             mock_file.assert_called_with(CONFIGURATION_PATH)
             self.assertIn("matchRequest", configuration)
