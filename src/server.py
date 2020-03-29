@@ -89,6 +89,24 @@ class RequestHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self.send_error(599, "Error proxying: {}".format(e))
 
+    def construct_url(self):
+
+        if self.path.startswith("/"):
+            if self.headers["Host"].startswith("http://"):
+                return f"{self.headers['Host']}{self.path}"
+            else:
+                return f"http://{self.headers['Host']}{self.path}"
+
+        # weird edge case found when proxying through this server directly
+        elif self.path.startswith("http://"):
+            return f"{self.path}"
+
+        else:
+            if self.headers["Host"].startswith("http://"):
+                return f"{self.headers['Host']}/{self.path}"
+            else:
+                return f"http://{self.headers['Host']}/{self.path}"
+
     def is_saga_request(self):
 
         logging.info("Checking if Saga request...")
@@ -97,19 +115,25 @@ class RequestHandler(SimpleHTTPRequestHandler):
         headers = config.get("headers", {})
         body = config.get("body", "")
 
-        constructed_url = f"{self.headers['Host']}{self.path}"
-        if not constructed_url.startswith("http://"):
-            constructed_url = f"http://{constructed_url}"
+        constructed_url = self.construct_url()
 
         if config["url"] != constructed_url:
+            logging.info(f"constructed_url: {constructed_url}")
+            logging.info(f"specified url: {config['url']}")
             return False
         if config["method"] != self.command:
+            logging.info(f"Method received: {self.command}")
+            logging.info(f"specified: {config['method']}")
             return False
         if headers and any(
             self.headers.get(header) != value for header, value in headers.items()
         ):
+            logging.info(f"Headers received: {self.headers}")
+            logging.info(f"specified: {headers}")
             return False
         if body and self.get_body() != body:
+            logging.info(f"Body specified: {body}")
+            logging.info(f"Received: {self.get_body()}")
             return False
 
         return True
@@ -147,7 +171,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
 
-    logging.info("Started our request")
+    logging.info("Started our server.")
 
     config = ConfigurationStore().get_config()
 
