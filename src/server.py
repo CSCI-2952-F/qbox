@@ -1,46 +1,155 @@
-import signal
-import asyncio
 import logging
-from aiohttp import web
-from configuration import ConfigurationManager
+import requests
+from functools import partial
+from interpolate import interpolate
+from configuration import ConfigurationStore
+from coordinator import SagaCoordinator, RequestNode, ENVOY_ADDRESS
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 ADDRESS = "0.0.0.0"
 PORT = 3001
 
-configuration = ConfigurationManager().get_config()
 
+class RequestHandler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        self.body = None
+        self.configuration = ConfigurationStore().get_config()
+        logging.info(f"Configuration == {self.configuration}")
+        super(RequestHandler, self).__init__(*args, **kwargs)
 
-async def main(loop):
-    """
-    This coroutine initiates our server as subsequent asyncio.Tasks on 
-    the event loop. It is safe to let this coroutine die in a loop that's running
-    forever. 
-    """
+    def do_GET(self):
+        return self.handle_connection()
 
-    runner = web.ServerRunner(web.Server(handler))
-    await runner.setup()
-    site = web.TCPSite(runner, ADDRESS, PORT)
-    await site.start()
+    def do_POST(self):
+        return self.handle_connection()
 
+    def do_PUT(self):
+        return self.handle_connection()
 
-async def handler(request):
-    """
-    Handle all requests as deemed necessary.
-    """
+    def do_PATCH(self):
+        return self.handle_connection()
+
+    def do_DELETE(self):
+        return self.handle_connection()
+
+    def do_OPTIONS(self):
+        return self.handle_connection()
+
+    def do_HEAD(self):
+        return self.handle_connection()
+
+    def do_TRACE(self):
+        return self.handle_connection()
+
+    def do_CONNECT(self):
+        return self.handle_connection()
+
+    def get_body(self):
+        content_len = int(self.headers.get("content-length", 0))
+        if self.body:
+            return self.body
+        body = self.rfile.read(content_len)
+        self.body = body
+        return self.body
+
+    def handle_connection(self):
+        logging.info(f"Handling request {self.headers} {self.get_body()}")
+        if self.configuration and self.is_saga_request():
+            logging.info("Identified a transaction request!")
+            status, headers, body = self.execute()
+            self.send_response(status)
+            for header, value in headers.items():
+                self.send_header(header, value)
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+        else:
+            logging.info("Decided it was not a transaction")
+            url = self.headers["Host"]
+            try:
+                logging.info(f"Sending request to {url}")
+                response = requests.request(
+                    method=self.command,
+                    # NOTE: We're assuming HTTPS traffic is never sent to us!
+                    # This is fine for our proof-of-concept - Envoy in practice
+                    # automatically upgrades all HTTP traffic to HTTPS if configured
+                    # to do so with the appropriate TLS certificates.
+                    url=url if url.startswith("http://") else f"http://{url}",
+                    headers=self.headers,
+                    data=self.get_body(),
+                    proxies={"http": ENVOY_ADDRESS, "https": ENVOY_ADDRESS},
+                )
+                logging.info(f"Got response back of {response.status_code}")
+                self.send_response(response.status_code)
+                for header, value in response.headers.items():
+                    self.send_header(header, value)
+                self.end_headers()
+                self.wfile.write(response.content)
+            except Exception as e:
+                self.send_error(599, "Error proxying: {}".format(e))
+
+    def is_saga_request(self):
+
+        logging.info("Checking if Saga request...")
+
+        config = self.configuration["matchRequest"]
+        headers = config.get("headers", {})
+        body = config.get("body", "")
+
+        constructed_url = f"{self.headers['Host']}{self.path}"
+        if not constructed_url.startswith("http://"):
+            constructed_url = f"http://{constructed_url}"
+
+        if config["url"] != constructed_url:
+            return False
+        if config["method"] != self.command:
+            return False
+        if headers and any(
+            self.headers.get(header) != value for header, value in headers.items()
+        ):
+            return False
+        if body and self.get_body() != body:
+            return False
+
+        return True
+
+    def execute(self):
+        """
+        Handle all requests as deemed necessary.
+        """
+
+        coordinator = SagaCoordinator(
+            self.configuration,
+            start_request_headers=self.headers,
+            start_request_body=self.get_body(),
+        )
+        success, transactions, failed_compensations = coordinator.execute_saga()
+        context = {
+            "parent": RequestNode(),
+            "root": coordinator.root,
+            "transactions": transactions,
+        }
+
+        if success:
+            return self.respond(self.configuration["onAllSucceeded"], context)
+        else:
+            return self.respond(self.configuration["onAnyFailed"], context)
+
+    def respond(self, config, context):
+
+        headers = {}
+        for header, value in config.get("headers", {}):
+            headers[header] = interpolate(value, **context)
+        body = interpolate(config.get("body", ""), **context)
+        return config["status-code"], headers, body
 
 
 if __name__ == "__main__":
 
-    loop = asyncio.get_event_loop()
-    loop.create_task(main(loop))
-    logging.info("Initialized Qbox! Now serving...")
+    logging.info("Started our request")
 
-    try:
-        loop.run_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        loop.stop()
-        loop.close()
+    config = ConfigurationStore().get_config()
+
+    httpd = HTTPServer((ADDRESS, PORT), RequestHandler)
+    httpd.serve_forever()
