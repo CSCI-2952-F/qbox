@@ -6,7 +6,7 @@ from interpolate import interpolate
 from requests.exceptions import Timeout
 
 # TODO: Make this configurable
-ENVOY_ADDRESS = "127.0.0.1:15001"
+ENVOY_ADDRESS = "http://127.0.0.1:15001"
 
 
 class RequestNode(object):

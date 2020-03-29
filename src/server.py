@@ -4,9 +4,9 @@ from functools import partial
 from interpolate import interpolate
 from configuration import ConfigurationStore
 from coordinator import SagaCoordinator, RequestNode, ENVOY_ADDRESS
-from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 ADDRESS = "0.0.0.0"
 PORT = 3001
@@ -14,9 +14,10 @@ PORT = 3001
 
 class RequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
-        super(RequestHandler, self).__init__(*args, **kwargs)
         self.body = None
         self.configuration = ConfigurationStore().get_config()
+        logging.info(f"Configuration == {self.configuration}")
+        super(RequestHandler, self).__init__(*args, **kwargs)
 
     def do_GET(self):
         return self.handle_connection()
@@ -46,14 +47,17 @@ class RequestHandler(SimpleHTTPRequestHandler):
         return self.handle_connection()
 
     def get_body(self):
+        content_len = int(self.headers.get("content-length", 0))
         if self.body:
             return self.body
-        body = self.rfile.read()
+        body = self.rfile.read(content_len)
         self.body = body
         return self.body
 
     def handle_connection(self):
+        logging.info(f"Handling request {self.headers} {self.get_body()}")
         if self.configuration and self.is_saga_request():
+            logging.info("Identified a transaction request!")
             status, headers, body = self.execute()
             self.send_response(status)
             for header, value in headers.items():
@@ -61,8 +65,10 @@ class RequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body.encode("utf-8"))
         else:
+            logging.info("Decided it was not a transaction")
             url = self.headers["Host"]
             try:
+                logging.info(f"Sending request to {url}")
                 response = requests.request(
                     method=self.command,
                     # NOTE: We're assuming HTTPS traffic is never sent to us!
@@ -74,6 +80,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     data=self.get_body(),
                     proxies={"http": ENVOY_ADDRESS, "https": ENVOY_ADDRESS},
                 )
+                logging.info(f"Got response back of {response.status_code}")
                 self.send_response(response.status_code)
                 for header, value in response.headers.items():
                     self.send_header(header, value)
@@ -83,6 +90,8 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 self.send_error(599, "Error proxying: {}".format(e))
 
     def is_saga_request(self):
+
+        logging.info("Checking if Saga request...")
 
         config = self.configuration["matchRequest"]
         headers = config.get("headers", {})
@@ -138,7 +147,9 @@ class RequestHandler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
 
+    logging.info("Started our request")
+
     config = ConfigurationStore().get_config()
 
-    httpd = ThreadingHTTPServer((ADDRESS, PORT), RequestHandler)
+    httpd = HTTPServer((ADDRESS, PORT), RequestHandler)
     httpd.serve_forever()
