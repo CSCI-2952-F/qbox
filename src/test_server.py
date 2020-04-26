@@ -10,6 +10,18 @@ from scapy.layers.http import HTTP, HTTPResponse, HTTPRequest
 
 
 class TestableHandler(RequestHandler):
+    """ 
+    It turns out the only way to test HttpServer implementations is to subclass them
+    and override certain methods so that results don't get flushed from buffers. 
+
+    Specifically, we override the `rfile` and `wfile` objects so that requests and responses 
+    can be read once a transaction is completed. We also override the `handle` and `finish` 
+    calls so that no flushing or destruction happens. We don't really need `handle` at all -
+    its job is to wrap around `handle_one_request` in an unusual way.
+
+    Further, we add an explicit `test` method that handles exactly one request for us. 
+    """
+
     def setup(self):
         self.rfile = io.BytesIO(self.request)
         self.wfile = None
@@ -148,6 +160,209 @@ class HTTPRequestHandlerTestCase(unittest.TestCase):
 
             with patch(
                 "builtins.open", mock_open(read_data=yaml.dump(configuration))
+            ) as mock_file:
+
+                with patch("os.path.exists") as os_mock:
+                    os_mock.return_value = True
+                    handler = TestableHandler(raw_request, (0, 0), None)
+
+                    write_file = io.BytesIO()
+                    handler.test(write_file)
+                    write_file.seek(0)
+
+                    response = HTTPResponse(write_file.read())
+                    self.assertEqual(response.Status_Code, b"200")
+                    self.assertEqual(
+                        response.load, b"Ratings: success\nDetails: success again\n"
+                    )
+
+    def test_saga_behaviour_with_multiple_configs(self):
+        """ 
+        We test support for multiple configurations here. Specifically, we create two identical sagas,
+        but with just the matchRequest URL property swapped out. They should logically return the same
+        results
+        """
+
+        configuration = [
+            {
+                "host": "productpage.svc",
+                "matchRequest": {
+                    "method": "GET",
+                    "url": "http://localhost:3001/",
+                    "headers": {"Start-Faking": "True"},
+                },
+                "onMatchedRequest": [
+                    {
+                        "method": "GET",
+                        "url": "http://ratings.svc/add/${parent.headers.Product-Id}",
+                        "isSuccessIfReceives": [
+                            {
+                                "status-code": 200,
+                                "headers": {"Content-type": "application/json"},
+                            }
+                        ],
+                        "onFailure": [
+                            {
+                                "method": "GET",
+                                "url": "http://ratings.svc/delete/${root.headers.Product-Id}",
+                                "timeout": 3,
+                                "maxRetriesOnTimeout": 1,
+                                "isSuccessIfReceives": [
+                                    {
+                                        "status-code": 200,
+                                        "headers": {"Content-type": "application/json"},
+                                    }
+                                ],
+                            }
+                        ],
+                        "timeout": 30,
+                        "maxRetriesOnTimeout": 3,
+                    },
+                    {
+                        "method": "GET",
+                        "url": "http://details.svc/details/add/${root.headers.Product-Id}",
+                        "isSuccessIfReceives": [
+                            {
+                                "status-code": 200,
+                                "headers": {"Content-type": "application/json"},
+                            }
+                        ],
+                        "onFailure": [
+                            {
+                                "method": "GET",
+                                "url": "http://details.svc/details/remove/${root.headers.Product-Id}",
+                                "timeout": 3,
+                                "maxRetriesOnTimeout": 1,
+                                "isSuccessIfReceives": [
+                                    {
+                                        "status-code": 200,
+                                        "headers": {"Content-type": "application/json"},
+                                    }
+                                ],
+                            }
+                        ],
+                        "timeout": 30,
+                        "maxRetriesOnTimeout": 3,
+                    },
+                ],
+                "onAllSucceeded": {
+                    "status-code": 200,
+                    "body": "Ratings: ${transaction[0].response.body}\nDetails: ${transaction[1].response.body}\n",
+                },
+                "onAnyFailed": {
+                    "status-code": 500,
+                    "body": "Ratings: ${transaction[0].response.body}\nDetails: ${transaction[1].response.body}\n",
+                },
+            },
+            {
+                "host": "productpage.svc",
+                "matchRequest": {
+                    "method": "GET",
+                    "url": "http://localhost:3001/ziggiebot",
+                    "headers": {"Start-Faking": "True"},
+                },
+                "onMatchedRequest": [
+                    {
+                        "method": "GET",
+                        "url": "http://ratings.svc/add/${parent.headers.Product-Id}",
+                        "isSuccessIfReceives": [
+                            {
+                                "status-code": 200,
+                                "headers": {"Content-type": "application/json"},
+                            }
+                        ],
+                        "onFailure": [
+                            {
+                                "method": "GET",
+                                "url": "http://ratings.svc/delete/${root.headers.Product-Id}",
+                                "timeout": 3,
+                                "maxRetriesOnTimeout": 1,
+                                "isSuccessIfReceives": [
+                                    {
+                                        "status-code": 200,
+                                        "headers": {"Content-type": "application/json"},
+                                    }
+                                ],
+                            }
+                        ],
+                        "timeout": 30,
+                        "maxRetriesOnTimeout": 3,
+                    },
+                    {
+                        "method": "GET",
+                        "url": "http://details.svc/details/add/${root.headers.Product-Id}",
+                        "isSuccessIfReceives": [
+                            {
+                                "status-code": 200,
+                                "headers": {"Content-type": "application/json"},
+                            }
+                        ],
+                        "onFailure": [
+                            {
+                                "method": "GET",
+                                "url": "http://details.svc/details/remove/${root.headers.Product-Id}",
+                                "timeout": 3,
+                                "maxRetriesOnTimeout": 1,
+                                "isSuccessIfReceives": [
+                                    {
+                                        "status-code": 200,
+                                        "headers": {"Content-type": "application/json"},
+                                    }
+                                ],
+                            }
+                        ],
+                        "timeout": 30,
+                        "maxRetriesOnTimeout": 3,
+                    },
+                ],
+                "onAllSucceeded": {
+                    "status-code": 200,
+                    "body": "Ratings: ${transaction[0].response.body}\nDetails: ${transaction[1].response.body}\n",
+                },
+                "onAnyFailed": {
+                    "status-code": 500,
+                    "body": "Ratings: ${transaction[0].response.body}\nDetails: ${transaction[1].response.body}\n",
+                },
+            },
+        ]
+        with requests_mock.Mocker() as m:
+            m.get(
+                "http://ratings.svc/add/12",
+                status_code=200,
+                headers={"Content-type": "application/json"},
+                text="success",
+            )
+            m.get(
+                "http://details.svc/details/add/12",
+                status_code=200,
+                headers={"Content-type": "application/json"},
+                text="success again",
+            )
+
+            raw_request = b"GET / HTTP/1.1\r\nHost: http://localhost:3001\r\nUser-Agent: python-requests/2.9.1\r\nAccept-Encoding: gzip, deflate\r\nAccept: */*\r\nConnection: keep-alive\r\nStart-Faking: True\r\nProduct-Id: 12\r\n\r\n"
+
+            with patch(
+                "builtins.open", mock_open(read_data=yaml.dump_all(configuration))
+            ) as mock_file:
+
+                with patch("os.path.exists") as os_mock:
+                    os_mock.return_value = True
+                    handler = TestableHandler(raw_request, (0, 0), None)
+
+                    write_file = io.BytesIO()
+                    handler.test(write_file)
+                    write_file.seek(0)
+
+                    response = HTTPResponse(write_file.read())
+                    self.assertEqual(response.Status_Code, b"200")
+                    self.assertEqual(
+                        response.load, b"Ratings: success\nDetails: success again\n"
+                    )
+
+            raw_request = b"GET /ziggiebot HTTP/1.1\r\nHost: http://localhost:3001\r\nUser-Agent: python-requests/2.9.1\r\nAccept-Encoding: gzip, deflate\r\nAccept: */*\r\nConnection: keep-alive\r\nStart-Faking: True\r\nProduct-Id: 12\r\n\r\n"
+
+            with patch(
+                "builtins.open", mock_open(read_data=yaml.dump_all(configuration))
             ) as mock_file:
 
                 with patch("os.path.exists") as os_mock:

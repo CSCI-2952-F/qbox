@@ -15,8 +15,8 @@ PORT = 3001
 class RequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         self.body = None
-        self.configuration = ConfigurationStore().get_config()
-        logging.info(f"Configuration == {self.configuration}")
+        self.configurations = ConfigurationStore().get_config()
+        logging.info(f"Configurations == {self.configurations}")
         super(RequestHandler, self).__init__(*args, **kwargs)
 
     def do_GET(self):
@@ -56,18 +56,18 @@ class RequestHandler(SimpleHTTPRequestHandler):
 
     def handle_connection(self):
         logging.info(f"Handling request {self.headers} {self.get_body()}")
-        if self.configuration:
-            res = self.is_saga_request()
-            if res[0]:
+        if self.configurations:
+            is_request, configuration_index = self.is_saga_request()
+            if is_request:
                 logging.info("Identified a transaction request!")
-                status, headers, body = self.execute(res[1])
+                status, headers, body = self.execute(configuration_index)
                 self.send_response(status)
                 for header, value in headers.items():
                     self.send_header(header, value)
                 self.end_headers()
                 self.wfile.write(body.encode("utf-8"))
                 return
-        
+
         logging.info("Decided it was not a transaction")
         url = self.headers["Host"]
         try:
@@ -95,8 +95,8 @@ class RequestHandler(SimpleHTTPRequestHandler):
     def is_saga_request(self):
 
         logging.info("Checking if Saga request...")
-        for c, i in enumerate(self.configuration):
-            config = c["matchRequest"]
+        for index, configuration in enumerate(self.configurations):
+            config = configuration["matchRequest"]
             headers = config.get("headers", {})
             body = config.get("body", "")
 
@@ -115,16 +115,16 @@ class RequestHandler(SimpleHTTPRequestHandler):
             if body and self.get_body() != body:
                 continue
 
-            return (True, i)
+            return (True, index)
         return (False, None)
 
-    def execute(self, i):
+    def execute(self, index):
         """
         Handle all requests as deemed necessary.
         """
 
         coordinator = SagaCoordinator(
-            self.configuration[i],
+            self.configurations[index],
             start_request_headers=self.headers,
             start_request_body=self.get_body(),
         )
@@ -136,9 +136,9 @@ class RequestHandler(SimpleHTTPRequestHandler):
         }
 
         if success:
-            return self.respond(self.configuration[i]["onAllSucceeded"], context)
+            return self.respond(self.configurations[index]["onAllSucceeded"], context)
         else:
-            return self.respond(self.configuration[i]["onAnyFailed"], context)
+            return self.respond(self.configurations[index]["onAnyFailed"], context)
 
     def respond(self, config, context):
 
