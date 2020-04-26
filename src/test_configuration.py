@@ -159,6 +159,8 @@ class TestConfigurationManager(unittest.TestCase):
         "onAnyFailed": {"status-code": 200},
     }
 
+    multiroots = [validRoot, validRoot]
+
     def test_get_config(self):
 
         with patch(
@@ -167,8 +169,34 @@ class TestConfigurationManager(unittest.TestCase):
 
             with patch("os.path.exists") as os_mock:
                 os_mock.return_value = True
-                configuration = ConfigurationStore().get_config()
+                configurations = ConfigurationStore().get_config()
 
             mock_file.assert_called_with(CONFIGURATION_PATH)
+
+            self.assertTrue(len(configurations), 1)
+
+            configuration = configurations[0]
+            self.assertIn("matchRequest", configuration)
+            self.assertIn("onMatchedRequest", configuration)
+
+    def test_get_multiple_config(self):
+
+        with patch(
+            "builtins.open", mock_open(read_data=yaml.dump_all(self.multiroots))
+        ) as mock_file:
+
+            with patch("os.path.exists") as os_mock:
+                os_mock.return_value = True
+                configurations = ConfigurationStore().get_config()
+
+            mock_file.assert_called_with(CONFIGURATION_PATH)
+
+            self.assertTrue(len(configurations), 2)
+
+            configuration = configurations[0]
+            self.assertIn("matchRequest", configuration)
+            self.assertIn("onMatchedRequest", configuration)
+
+            configuration = configurations[1]
             self.assertIn("matchRequest", configuration)
             self.assertIn("onMatchedRequest", configuration)

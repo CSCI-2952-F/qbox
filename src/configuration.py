@@ -106,12 +106,12 @@ class ConfigurationStore(object):
 
     def __init__(self):
 
-        self.config = {}
+        self.config = []
 
         if os.path.exists(CONFIGURATION_PATH):
             with open(CONFIGURATION_PATH) as config:
-                self.config = ROOT_SCHEMA.validate(yaml.load(config))
+                for c in yaml.safe_load_all(config):
+                    self.config.append(ROOT_SCHEMA.validate(c))
 
     def get_config(self):
-
         return self.config
