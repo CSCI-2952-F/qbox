@@ -81,7 +81,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 url=url if url.startswith("http://") else f"http://{url}",
                 headers=self.headers,
                 data=self.get_body(),
-                proxies={"http": ENVOY_ADDRESS, "https": ENVOY_ADDRESS},
+                # proxies={"http": ENVOY_ADDRESS, "https": ENVOY_ADDRESS},
             )
             logging.info(f"Got response back of {response.status_code}")
             self.send_response(response.status_code)

@@ -4,6 +4,7 @@ import requests
 import itertools
 from interpolate import interpolate
 from requests.exceptions import Timeout
+import random
 
 # TODO: Make this configurable
 ENVOY_ADDRESS = "http://127.0.0.1:15001"
@@ -196,7 +197,7 @@ class SagaCoordinator(object):
                     headers=node.headers,
                     data=node.body,
                     timeout=transaction["timeout"],
-                    proxies={"http": ENVOY_ADDRESS, "https": ENVOY_ADDRESS},
+                    # proxies={"http": ENVOY_ADDRESS, "https": ENVOY_ADDRESS},
                 )
             except Timeout:
                 continue
