@@ -90,7 +90,12 @@ class SagaCoordinator(object):
 
         transactions = self.configuration["onMatchedRequest"]
 
-        for transaction in transactions:
+
+        l = list(range(len(transactions)))
+        random.shuffle(l)
+        for i in l:
+        # for transaction in transactions:
+            transaction = transactions[i]
             node = self.send(transaction, kind="TRANSACTION", parent=self.root)
 
             if self.is_successful(node, transaction["isSuccessIfReceives"]):
