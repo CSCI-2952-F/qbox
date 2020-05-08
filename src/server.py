@@ -4,7 +4,7 @@ from functools import partial
 from interpolate import interpolate
 from configuration import ConfigurationStore
 from coordinator import SagaCoordinator, RequestNode, ENVOY_ADDRESS
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -155,5 +155,5 @@ if __name__ == "__main__":
 
     config = ConfigurationStore().get_config()
 
-    httpd = HTTPServer((ADDRESS, PORT), RequestHandler)
+    httpd = ThreadingHTTPServer((ADDRESS, PORT), RequestHandler)
     httpd.serve_forever()
